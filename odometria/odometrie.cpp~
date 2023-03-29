@@ -1,0 +1,1373 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <iostream>
+#include <iomanip>
+#include <opengv/relative_pose/methods.hpp>
+#include <opengv/relative_pose/CentralRelativeAdapter.hpp>
+#include <sstream>
+#include <fstream>
+#include "random_generators.hpp"
+#include "experiment_helpers.hpp"
+#include "time_measurement.hpp"
+
+#include <stdio.h>
+#include <iostream>
+#include <fstream>
+#include <iomanip>
+#include <sys/time.h>
+
+#include "opencv2/core.hpp"
+#include "opencv2/features2d.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/xfeatures2d.hpp"
+#include <opencv2/calib3d/calib3d.hpp>
+#include "opencv/cv.h"
+
+#include <eigen3/Eigen/Core>
+#include <eigen3/Eigen/Geometry> 
+
+
+
+using namespace opengv;
+
+
+void Rotacja_Kneip_5 (CvMat* points_mat_1, CvMat* points_mat_2, int l_punktow, CvMat* Rotation, char* fail);
+void Rotacja_Nister_5 (CvMat* points_mat_1, CvMat* points_mat_2, int l_punktow, CvMat* Rotation, char* fail);
+void Cv2Eig(CvMat* Z, bearingVectors_t & Do, int l_punktow);
+
+
+namespace opengv
+{
+/**
+ * \brief The namespace for the triangulation methods.
+ */ std::vector<int> getNindices( int n );
+namespace triangulation
+{
+
+/**
+ * \brief Compute the position of a 3D point seen from two viewpoints. Linear
+ *        Method.
+ *
+ * \param[in] adapter Visitor holding bearing-vector correspondences, plus the
+ *                    relative transformation.
+ * \param[in] index The index of the correspondence being triangulated.
+ * \return The 3D point expressed in the first viewpoint.
+ */
+point_t triangulate(
+    const relative_pose::RelativeAdapterBase & adapter, size_t index );
+
+/**
+ * \brief Compute the position of a 3D point seen from two viewpoints. Fast
+ *        non-linear approximation (closed-form).
+ *
+ * \param[in] adapter Visitor holding bearing-vector correspondences, plus the
+ *                    relative transformation.
+ * \param[in] index The index of the correspondence being triangulated.
+ * \return The 3D point expressed in the first viewpoint.
+ */
+point_t triangulate2(
+    const relative_pose::RelativeAdapterBase & adapter, size_t index );
+
+}
+
+}
+
+opengv::point_t
+opengv::triangulation::triangulate2(
+    const relative_pose::RelativeAdapterBase & adapter,
+    size_t index )
+{
+  translation_t t12 = adapter.gett12();
+  rotation_t R12 = adapter.getR12();
+  bearingVector_t f1 = adapter.getBearingVector1(index);
+  bearingVector_t f2 = adapter.getBearingVector2(index);
+
+  bearingVector_t f2_unrotated = R12 * f2;
+  Eigen::Vector2d b;
+  b[0] = t12.dot(f1);
+  b[1] = t12.dot(f2_unrotated);
+  Eigen::Matrix2d A;
+  A(0,0) = f1.dot(f1);
+  A(1,0) = f1.dot(f2_unrotated);
+  A(0,1) = -A(1,0);
+  A(1,1) = -f2_unrotated.dot(f2_unrotated);
+  Eigen::Vector2d lambda = A.inverse() * b;
+  Eigen::Vector3d xm = lambda[0] * f1;
+  Eigen::Vector3d xn = t12 + lambda[1] * f2_unrotated;
+  point_t point = ( xm + xn )/2;
+  return point;
+};
+
+
+std::vector<int>
+opengv::getNindices( int n )
+{
+  std::vector<int> indices;
+  for(int i = 0; i < n; i++)
+    indices.push_back(i);
+  return indices;
+}
+
+
+void wyswietl_macierz(CvMat* Macierz)
+{
+	int wiersze = Macierz->rows;
+	int kolumny = Macierz->cols;
+	for(int i=0; i< wiersze; i++)
+	{		
+		for(int j=0; j<kolumny; j++)
+		{
+			std::cout<<cvmGet(Macierz,i,j)<<"\t";
+		}
+		std::cout<< std::endl;
+	}
+	std::cout<< std::endl;
+}
+
+void wyswietl_macierz_transponowana(CvMat* Macierz)
+{
+        int wiersze = Macierz->rows;
+        int kolumny = Macierz->cols;
+        for(int i=0; i< kolumny; i++)
+        {
+                for(int j=0; j<wiersze; j++)
+                {
+                        std::cout<<cvmGet(Macierz,j,i)<<"\t";
+                }
+                std::cout<< std::endl;
+        }
+        std::cout<< std::endl;
+}
+
+
+int losuj(int max)
+{
+  unsigned int 
+    num_bins = (unsigned long) max +1, 
+    num_rand = (unsigned long) RAND_MAX +1, 
+    bin_size = num_rand / num_bins,
+    defect   = num_rand % num_bins;
+
+  long x;
+  do 
+  {
+    x = random();
+  }
+  while (num_rand - defect <= (unsigned long)x);
+  return (int)x/bin_size;
+}
+
+/*
+W necie ktos napisal
+http://stackoverflow.com/questions/910423/which-is-faster-comparison-or-assignment
+
+Well, since you say you're sure that this matters you should just write a test program and measure to find the difference.
+
+Comparison can be faster if this code is executed on multiple variables allocated at scattered addresses in memory. With comparison you will only read data from memory to the processor cache, and if you don't change the variable value when the cache decides to to flush the line it will see that the line was not changed and there's no need to write it back to the memory. This can speed up execution.
+
+*/
+// dla malej ilosci liczb do losowania bez powtorzen takie podejscie jest szybsze
+void losuj_3(int max, int* l_1, int* l_2, int* l_3) 
+{
+  int zajete_elementy_konca = 0;
+  *l_1 = losuj(max); //zakladam, że zostalo przesuniete do zakresu [0, max-1]
+  if (*l_1 == max)
+  {
+    ++zajete_elementy_konca;
+  }
+  *l_2 = losuj(max-1);
+  if (*l_2 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_2)
+  {
+     *l_2 = max - zajete_elementy_konca;
+     ++zajete_elementy_konca;
+  }
+  *l_3 = losuj(max-2);
+  if (*l_1 == *l_3)
+  {
+     *l_3 = max - zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_3)
+  {
+     *l_3 = max - zajete_elementy_konca;
+  }
+}
+
+void losuj_5(int max, int* l_1, int* l_2, int* l_3, int* l_4, int* l_5) 
+{
+  int zajete_elementy_konca = 0;
+  *l_1 = losuj(max); //zakladam, że zostalo przesuniete do zakresu [0, max-1]
+  if (*l_1 == max)
+  {
+    ++zajete_elementy_konca;
+  }
+  *l_2 = losuj(max-1);
+  if (*l_2 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_2)
+  {
+     *l_2 = max - zajete_elementy_konca;
+     ++zajete_elementy_konca;
+  }
+  *l_3 = losuj(max-2);
+  if (*l_3 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_3)
+  {
+    *l_3 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_3)
+  {
+    *l_3 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  *l_4 = losuj(max-3);
+  if (*l_4 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  *l_5 = losuj(max-4);
+  if (*l_5 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_4 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+}
+
+
+void losuj_8(int max, int* l_1, int* l_2, int* l_3, int* l_4, int* l_5, int* l_6, int* l_7, int* l_8) 
+{
+  int zajete_elementy_konca = 0;
+  *l_1 = losuj(max); //zakladam, że zostalo przesuniete do zakresu [0, max-1]
+  if (*l_1 == max)
+  {
+    ++zajete_elementy_konca;
+  }
+  *l_2 = losuj(max-1);
+  if (*l_2 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_2)
+  {
+     *l_2 = max - zajete_elementy_konca;
+     ++zajete_elementy_konca;
+  }
+  *l_3 = losuj(max-2);
+  if (*l_3 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_3)
+  {
+    *l_3 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_3)
+  {
+    *l_3 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  *l_4 = losuj(max-3);
+  if (*l_4 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_4)
+  {
+    *l_4 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  *l_5 = losuj(max-4);
+  if (*l_5 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_4 == *l_5)
+  {
+    *l_5 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  *l_6 = losuj(max-5);
+  if (*l_6 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_6)
+  {
+    *l_6 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_6)
+  {
+    *l_6 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_6)
+  {
+    *l_6 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_4 == *l_6)
+  {
+    *l_6 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_5 == *l_6)
+  {
+    *l_6 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+
+  *l_7 = losuj(max-6);
+  if (*l_7 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_4 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_5 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_6 == *l_7)
+  {
+    *l_7 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+
+  
+  *l_8 = losuj(max-6);
+  if (*l_7 == max - zajete_elementy_konca)
+  {
+    ++zajete_elementy_konca;
+  }
+  else if (*l_1 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_2 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_3 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_4 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_5 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_6 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+  else if (*l_7 == *l_8)
+  {
+    *l_8 = max - zajete_elementy_konca;
+    ++zajete_elementy_konca;
+  }
+}
+
+
+void kabsch(CvMat* points_mat_1, CvMat* points_mat_2, int point_count, CvMat* Rotation, CvMat* Translation)
+{
+/*
+std::cout<<"points mat 1:\n\n";
+wyswietl_macierz(points_mat_1);
+std::cout<<"points mat 2:\n\n";
+wyswietl_macierz(points_mat_2);
+*/
+  //centroids
+  //P  
+  double centroid_P_x = 0;
+  double centroid_P_y = 0;
+  double centroid_P_z = 0; 
+
+  double centroid_Q_x = 0;
+  double centroid_Q_y = 0;
+  double centroid_Q_z = 0; 
+
+  CvMat* Centroid_P = cvCreateMat( 3, 1, CV_64FC1);
+  CvMat* Centroid_Q = cvCreateMat( 3, 1, CV_64FC1);
+
+  //wyswietl_macierz(points_mat_2);
+
+  for(int i = 0; i < point_count; ++i)
+  {
+    centroid_P_x += cvmGet(points_mat_1,0,i);
+    centroid_P_y += cvmGet(points_mat_1,1,i);
+    centroid_P_z += cvmGet(points_mat_1,2,i);
+  }
+  for(int i = 0; i < point_count; ++i)
+  {
+    centroid_Q_x += cvmGet(points_mat_2,i,0);
+    centroid_Q_y += cvmGet(points_mat_2,i,1);
+    centroid_Q_z += cvmGet(points_mat_2,i,2);
+  }
+  centroid_P_x =centroid_P_x/point_count;
+  centroid_P_y =centroid_P_y/point_count;
+  centroid_P_z =centroid_P_z/point_count;
+
+  centroid_Q_x =centroid_Q_x/point_count;
+  centroid_Q_y =centroid_Q_y/point_count;
+  centroid_Q_z =centroid_Q_z/point_count;
+//P-macierz punktów points_mat_1 po ich transpozycji przez centroid_P
+  //cvMat* P= cvCreateMat(point_count, 3, CV_64FC1);
+  CvMat* P  = cvCreateMat (3, point_count, CV_64FC1);
+  for (int i = 0; i<point_count; ++i)
+  {
+    CV_MAT_ELEM(*P, double, 0, i) =cvmGet(points_mat_1,0,i)-centroid_P_x;
+    CV_MAT_ELEM(*P, double, 1, i) =cvmGet(points_mat_1,1,i)-centroid_P_y;
+    CV_MAT_ELEM(*P, double, 2, i) =cvmGet(points_mat_1,2,i)-centroid_P_z;
+  }
+
+//Q-macierz punktów points_mat_2 po ich transpozycji przez centroid_Q
+  CvMat* Q = cvCreateMat (point_count, 3, CV_64FC1);
+
+  for (int i = 0; i<point_count; ++i)
+  {
+    CV_MAT_ELEM(*Q, double, i, 0) =cvmGet(points_mat_2,i,0)-centroid_Q_x;
+    CV_MAT_ELEM(*Q, double, i, 1) =cvmGet(points_mat_2,i,1)-centroid_Q_y;
+    CV_MAT_ELEM(*Q, double, i, 2) =cvmGet(points_mat_2,i,2)-centroid_Q_z;
+  }
+
+  CV_MAT_ELEM(*Centroid_P, double, 0, 0) = centroid_P_x;
+  CV_MAT_ELEM(*Centroid_P, double, 1, 0) = centroid_P_y;
+  CV_MAT_ELEM(*Centroid_P, double, 2, 0) = centroid_P_z;
+
+  CV_MAT_ELEM(*Centroid_Q, double, 0, 0) = centroid_Q_x;
+  CV_MAT_ELEM(*Centroid_Q, double, 1, 0) = centroid_Q_y;
+  CV_MAT_ELEM(*Centroid_Q, double, 2, 0) = centroid_Q_z;
+
+  //std::cout<<"\nwiersze P: "<< P->rows<<" kolumny P: "<< P->cols<< std::endl;
+  //std::cout<<"\nwiersze Q: "<< Q->rows<<" kolumny Q: "<< Q->cols<< std::endl;
+
+  //wyswietl_macierz_transponowana(P);
+
+  CvMat* H = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* U_T = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* S = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* V = cvCreateMat( 3, 3, CV_64FC1);
+  //CvMat* R1 = cvCreateMat( 3, 3, CV_64FC1);
+  //Mat r;
+  //Mat H = Mat::zeros(3, 3, CV_64FC1);
+  
+  cvMatMul(P,Q,H);
+  cvSVD(H,S,U_T,V,CV_SVD_U_T); //H=U*WV^T
+  //std::cout<<"macierze P i Q:\n";
+  //wyswietl_macierz(P); std::cout<<"\n\n\n";
+  //wyswietl_macierz(Q);
+  cvMatMul(V,U_T,Rotation);
+  //wyswietl_macierz (U_T);
+
+  // W nowym opencv cvMatMul to macro dla GEMM, CvMat jest przestarzałe
+  // i trzymane tylko jako spadek po poprzednich wersjach. Lepiej używać Mat
+  //cvGEMM(V, U_T, 1, NULL, 0, R1, 0);
+  //aa= &V;
+  //bb= &U_T;
+  //wyswietl_macierz(R);
+  //wyswietl_macierz(R1);
+  //wyswietl_macierz(H);
+  //Mat aa = cvarrToMat(V);
+  //Mat bb = cvarrToMat(U_T);
+  //r=aa*bb;
+  //std::cout<<"macierz r:\n"<< r <<std::endl;
+  //std::cout<<"wyznacznik R: "<<cvDet(Rotation)<<std::endl;
+  //wyswietl_macierz(R);
+  if(cvDet(Rotation)<0)
+  {
+    //std::cout<<" Kabsch w druga strone\n";
+    //CV_MAT_ELEM(*Rotation, double, 0, 2) = -cvmGet(Rotation,0,2);
+    //CV_MAT_ELEM(*Rotation, double, 1, 2) = -cvmGet(Rotation,1,2);
+    //CV_MAT_ELEM(*Rotation, double, 2, 2) = -cvmGet(Rotation,2,2);
+
+    //std::cout<<" Rotacja przed i po\n";
+    //wyswietl_macierz (Rotation);
+    CV_MAT_ELEM(*V, double, 0, 2) = -cvmGet(V,0,2);
+    CV_MAT_ELEM(*V, double, 1, 2) = -cvmGet(V,1,2);
+    CV_MAT_ELEM(*V, double, 2, 2) = -cvmGet(V,2,2);
+
+    cvMatMul(V,U_T,Rotation);
+    //wyswietl_macierz (Rotation);
+  }
+
+
+  //wyswietl_macierz(R);
+  
+  //cvMatMul(-1,Rotation, Temp);
+  cvGEMM (Rotation, Centroid_P, -1, Centroid_Q, 1, Translation, 0);
+
+ /* std::cout<<"\n Mnozenie sehserhdrhdhdr";
+  cvMatMul(Rotation, Centroid_P,Temp1);  
+  wyswietl_macierz(Temp1);
+  cvGEMM(Rotation, Centroid_P,1,NULL,0,Temp2,0);
+  wyswietl_macierz(Temp2);
+
+  wyswietl_macierz(Centroid_P);
+  wyswietl_macierz(Rotation);
+  wyswietl_macierz(Centroid_Q);
+*/
+  cvReleaseMat(&Centroid_P);
+  cvReleaseMat(&Centroid_Q);
+  cvReleaseMat(&H);
+  cvReleaseMat(&P);
+  cvReleaseMat(&Q);
+  cvReleaseMat(&U_T);
+  cvReleaseMat(&S);
+  cvReleaseMat(&V);
+}
+
+void centroid_translation(CvMat* points_mat_1, CvMat* points_mat_2, int point_count, CvMat* Rotation, CvMat* Translation)
+{
+/*
+std::cout<<"points mat 1:\n\n";
+wyswietl_macierz_transponowana(points_mat_1);
+std::cout<<"points mat 2:\n\n";
+wyswietl_macierz(points_mat_2); */
+
+  //centroids
+  //P  
+  double centroid_P_x = 0;
+  double centroid_P_y = 0;
+  double centroid_P_z = 0; 
+
+  double centroid_Q_x = 0;
+  double centroid_Q_y = 0;
+  double centroid_Q_z = 0; 
+
+  CvMat* Centroid_P = cvCreateMat( 3, 1, CV_64FC1);
+  CvMat* Centroid_Q = cvCreateMat( 3, 1, CV_64FC1);
+
+  //wyswietl_macierz(points_mat_2);
+
+  for(int i = 0; i < point_count; ++i)
+  {
+    centroid_P_x += cvmGet(points_mat_1,0,i);
+    centroid_P_y += cvmGet(points_mat_1,1,i);
+    centroid_P_z += cvmGet(points_mat_1,2,i);
+  }
+  for(int i = 0; i < point_count; ++i)
+  {
+    centroid_Q_x += cvmGet(points_mat_2,i,0);
+    centroid_Q_y += cvmGet(points_mat_2,i,1);
+    centroid_Q_z += cvmGet(points_mat_2,i,2);
+  }
+  centroid_P_x =centroid_P_x/point_count;
+  centroid_P_y =centroid_P_y/point_count;
+  centroid_P_z =centroid_P_z/point_count;
+
+  centroid_Q_x =centroid_Q_x/point_count;
+  centroid_Q_y =centroid_Q_y/point_count;
+  centroid_Q_z =centroid_Q_z/point_count;
+
+  //std::cout <<" Centroid Px: "<<centroid_P_x<<"\tCentroid Qx: "<<centroid_Q_x<< std::endl;
+  //std::cout <<" Centroid Py: "<<centroid_P_y<<"\tCentroid Qy: "<<centroid_Q_y<< std::endl;
+  //std::cout <<" Centroid Pz: "<<centroid_P_z<<"\tCentroid Qz: "<<centroid_Q_z<< std::endl;
+
+//P-macierz punktów points_mat_1 po ich transpozycji przez centroid_P
+  //cvMat* P= cvCreateMat(point_count, 3, CV_64FC1);
+
+  CV_MAT_ELEM(*Centroid_P, double, 0, 0) = centroid_P_x;
+  CV_MAT_ELEM(*Centroid_P, double, 1, 0) = centroid_P_y;
+  CV_MAT_ELEM(*Centroid_P, double, 2, 0) = centroid_P_z;
+
+  CV_MAT_ELEM(*Centroid_Q, double, 0, 0) = centroid_Q_x;
+  CV_MAT_ELEM(*Centroid_Q, double, 1, 0) = centroid_Q_y;
+  CV_MAT_ELEM(*Centroid_Q, double, 2, 0) = centroid_Q_z;
+
+  //wyswietl_macierz(Centroid_P);
+  //wyswietl_macierz(Centroid_Q);
+  //std::cout <<"point ocunt: "<<point_count<<std::endl;
+  //wyswietl_macierz(R);
+  
+  //cvMatMul(-1,Rotation, Temp);
+  cvGEMM (Rotation, Centroid_P, -1, Centroid_Q, 1, Translation, 0);
+
+ /* std::cout<<"\n Mnozenie sehserhdrhdhdr";
+  cvMatMul(Rotation, Centroid_P,Temp1);  
+  wyswietl_macierz(Temp1);
+  cvGEMM(Rotation, Centroid_P,1,NULL,0,Temp2,0);
+  wyswietl_macierz(Temp2);
+
+  wyswietl_macierz(Centroid_P);
+  wyswietl_macierz(Rotation);
+  wyswietl_macierz(Centroid_Q);
+*/
+  //std::cout<<" dla point count centroid translation : "<< point_count<<std::endl;
+  //wyswietl_macierz(Translation);
+  //wyswietl_macierz(Rotation);
+  cvReleaseMat(&Centroid_P);
+  cvReleaseMat(&Centroid_Q);
+}
+
+
+void Rotacja_Kneip_5 (CvMat* points_mat_1, CvMat* points_mat_2, int l_punktow, CvMat* Rotation, char* fail)
+//void Rotacja_Kneip_5 (const bearingVectors_t & bearingVectors1, const bearingVectors_t & bearingVectors2, int l_punktow, CvMat* Rotation)
+{
+  bearingVectors_t bearingVectors1;
+  bearingVectors_t bearingVectors2;
+  Eigen::Vector3d bearingVector;
+
+  for (int i=0; i<l_punktow; ++i )
+  {
+    //bearingVector = [cvmGet(points_mat_1, i, 0), cvmGet(points_mat_1, i, 1),cvmGet(points_mat_1, i, 2)];
+    bearingVector[0] = cvmGet(points_mat_1, i, 0);
+    bearingVector[1] = cvmGet(points_mat_1, i, 1);
+    bearingVector[2] = cvmGet(points_mat_1, i, 2);
+    bearingVector= bearingVector;
+    bearingVectors1.push_back (bearingVector);
+    bearingVectors1[i] = bearingVectors1[i] / bearingVectors1[i].norm();
+
+    //bearingVector = [cvmGet(points_mat_2, i, 0), cvmGet(points_mat_2, i, 1),cvmGet(points_mat_2, i, 2)];
+    bearingVector[0] = cvmGet(points_mat_2, i, 0);
+    bearingVector[1] = cvmGet(points_mat_2, i, 1);
+    bearingVector[2] = cvmGet(points_mat_2, i, 2);
+    bearingVector= bearingVector;
+    bearingVectors2.push_back (bearingVector);
+    bearingVectors2[i] = bearingVectors2[i] / bearingVectors2[i].norm();
+    //std::cout<<bearingVector[0]<<" "<<bearingVector[1]<<" "<<bearingVector[2]<<" "<<std::endl;
+  }
+
+  relative_pose::CentralRelativeAdapter adapter(bearingVectors1,bearingVectors2);
+  size_t iterations = 50;
+  rotations_t fivept_kneip_rotations;
+  std::vector<int> indices5 = getNindices(5);
+  for(size_t i = 0; i < iterations; i++)
+    fivept_kneip_rotations= relative_pose::fivept_kneip(adapter,indices5);
+    //std::cout<<" size bearing vectors 1 size :"<< bearingVectors1.size() <<"\n\n" ;
+    //std::cout<<" size bearing vectors 2 size :"<< bearingVectors2.size() <<"\n\n" ;
+    //std::cout<<" size kneip ROTACJA KNEIP 5 :"<< fivept_kneip_rotations.size() <<"\n\n" ;
+    rotation_t fivept_kneip_rotation_ostatnia;
+
+
+  
+
+
+  if (fivept_kneip_rotations.size() < 1 )
+  {
+    *fail = 1;
+     // std::cout<<"fail!!!!!"<< std::endl;
+  }
+  else
+  {
+    fivept_kneip_rotation_ostatnia = fivept_kneip_rotations.at(fivept_kneip_rotations.size() -1);
+    *fail = 0;
+    for (int i= 0; i < 3; ++i)
+    {
+    for (int j =0; j<3; ++j)
+      {
+      CV_MAT_ELEM(* Rotation, double, i, j) = fivept_kneip_rotation_ostatnia(i,j);
+      }
+    }
+
+  }
+
+
+
+  //std::cout<<"five point na opencv mat: \n"<< fivept_kneip_rotation_ostatnia <<std::endl;
+}
+
+void fivept_kneip_moje(
+const bearingVectors_t & bearingVectors1,
+const bearingVectors_t & bearingVectors2)
+{
+  size_t iterations = 50;
+  std::vector<int> indices5 = getNindices(5);
+  rotations_t fivept_kneip_rotations;
+  relative_pose::CentralRelativeAdapter adapter1(bearingVectors1,bearingVectors2);
+  for(size_t i = 0; i < iterations; i++)
+    fivept_kneip_rotations = relative_pose::fivept_kneip(adapter1,indices5);
+  std::cout<<" size kneip moje:"<< fivept_kneip_rotations.size() <<"\n\n" ;
+
+}
+
+
+
+void Rotacja_nonlinear (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, char* fail)
+{
+  relative_pose::CentralRelativeAdapter adapter(bearingVectors1,bearingVectors2);
+
+  size_t iterations = 50;
+  transformation_t nonlinear_transformation;
+  std::vector<int> indices5 = getNindices(5);
+
+  for(size_t i = 0; i < iterations; i++)
+    nonlinear_transformation= relative_pose::optimize_nonlinear(adapter,indices5);
+
+    //std::cout<<" size kneip ROTACJA KNEIP 5 :"<< fivept_kneip_rotations.size() <<"\n\n" ;
+
+  if (nonlinear_transformation.size() < 1 )
+  {
+    *fail = 1;
+     // std::cout<<"fail!!!!!"<< std::endl;
+  }
+  else
+  {
+    *fail = 0;
+    //std::cout << nonlinear_transformation << std::endl << std::endl;
+    for (int i= 0; i < 3; ++i)
+    {
+    for (int j =0; j<3; ++j)
+      {                                           //R t->na pewno tak pisze na stronie (czyli ok, nic nie zmienial)
+      CV_MAT_ELEM(* Rotation, double, i, j) = nonlinear_transformation(i,j);
+      }
+    }
+
+  }
+  //std::cout<<"five point na opencv mat: \n"<< fivept_kneip_rotation_ostatnia <<std::endl;
+}
+
+void Rotacja_eigensolver (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, CvMat* Translation, char* fail)
+//void Rotacja_Kneip_5 (const bearingVectors_t & bearingVectors1, const bearingVectors_t & bearingVectors2, int l_punktow, CvMat* Rotation)
+{
+  /*
+  bearingVectors_t bearingVectors11;
+  bearingVectors_t bearingVectors22;
+  Eigen::Vector3d bearingVector;
+  for (int i=0; i<l_punktow; ++i )
+  {
+    //bearingVector = [cvmGet(points_mat_1, i, 0), cvmGet(points_mat_1, i, 1),cvmGet(points_mat_1, i, 2)];
+    bearingVector = bearingVectors1[i];
+    bearingVectors11.push_back (bearingVector);
+
+    //bearingVector = [cvmGet(points_mat_2, i, 0), cvmGet(points_mat_2, i, 1),cvmGet(points_mat_2, i, 2)];
+    bearingVector = bearingVectors2[i];
+    bearingVectors22.push_back (bearingVector);
+    //std::cout<<bearingVector[0]<<" "<<bearingVector[1]<<" "<<bearingVector[2]<<" "<<std::endl;
+  }
+  */
+  //relative_pose::CentralRelativeAdapter adapter(bearingVectors11,bearingVectors22);
+  relative_pose::CentralRelativeAdapter adapter(bearingVectors1,bearingVectors2);
+
+  size_t iterations = 50;
+  rotation_t eigensolver_rotation;
+
+
+  for(size_t i = 0; i < iterations; i++)
+    eigensolver_rotation= relative_pose::eigensolver(adapter);
+
+
+  if (eigensolver_rotation.size() < 1 )
+  {
+    *fail = 1;
+     // std::cout<<"fail!!!!!"<< std::endl;
+  }
+  else
+  {
+    *fail = 0;
+    for (int i= 0; i < 3; ++i)
+    {
+    for (int j =0; j<3; ++j)
+      {
+      CV_MAT_ELEM(* Rotation, double, i, j) = eigensolver_rotation(i,j);
+      }
+    }
+
+  }
+  //std::cout<<"five point na opencv mat: \n"<< fivept_kneip_rotation_ostatnia <<std::endl;
+}
+void Rotacja_eigensolver_transalcja_glebia (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, CvMat* Translation, char* fail)
+//void Rotacja_Kneip_5 (const bearingVectors_t & bearingVectors1, const bearingVectors_t & bearingVectors2, int l_punktow, CvMat* Rotation)
+{
+  /*
+  bearingVectors_t bearingVectors11;
+  bearingVectors_t bearingVectors22;
+  Eigen::Vector3d bearingVector;
+  for (int i=0; i<l_punktow; ++i )
+  {
+    //bearingVector = [cvmGet(points_mat_1, i, 0), cvmGet(points_mat_1, i, 1),cvmGet(points_mat_1, i, 2)];
+    bearingVector = bearingVectors1[i];
+    bearingVectors11.push_back (bearingVector);
+
+    //bearingVector = [cvmGet(points_mat_2, i, 0), cvmGet(points_mat_2, i, 1),cvmGet(points_mat_2, i, 2)];
+    bearingVector = bearingVectors2[i];
+    bearingVectors22.push_back (bearingVector);
+    //std::cout<<bearingVector[0]<<" "<<bearingVector[1]<<" "<<bearingVector[2]<<" "<<std::endl;
+  }
+  */
+  //relative_pose::CentralRelativeAdapter adapter(bearingVectors11,bearingVectors22);
+  relative_pose::CentralRelativeAdapter adapter(bearingVectors1,bearingVectors2);
+  rotation_t eigensolver_rotation;
+  Eigen::Vector3d translation;
+  std::vector<int> indices = getNindices(bearingVectors1.size());
+  eigensolverOutput_t outModel;
+
+  eigensolver_rotation= relative_pose::eigensolver(adapter,indices,outModel);
+  translation = outModel.translation;
+  translation.normalize();
+
+  //eigensolver_rotation= relative_pose::eigensolver(adapter);
+
+  //std::cout<<"eigen out model rotation size "<<outModel.rotation.size() <<std::endl;
+  //std::cout<<"translacja "<<translation<<std::endl;
+/*
+ if (outModel.rotation.size() < 1 )
+  {
+    *fail = 1; 
+    int p1, p2, p3, p4, p5, p6, p7, p8;
+    //std::cout<<"haha to jednak fail" <<std::endl;
+    for (int k = 0; outModel.rotation.size() < 1; ++k)
+    {
+      std::vector<int> indices_failowe;
+      losuj_8(7, &p1, &p2, &p3, &p4, &p5, &p6, &p7, &p8);
+      indices_failowe.push_back(p1);
+      indices_failowe.push_back(p2);
+      indices_failowe.push_back(p3);
+      indices_failowe.push_back(p4);
+      indices_failowe.push_back(p5);
+      indices_failowe.push_back(p6);
+      indices_failowe.push_back(p7);
+      indices_failowe.push_back(p8);
+      eigensolver_rotation= relative_pose::eigensolver(adapter,indices,outModel);
+      //std::cout<<"k failowe to "<<k<<"Rotations.size() "<<Rotations.size() <<std::endl;
+    }
+  }
+*/
+
+  *fail = 0;
+  for (int i= 0; i < 3; ++i)
+  {
+  CV_MAT_ELEM(* Translation, double, i, 0) = translation(i,0);
+  for (int j =0; j<3; ++j)
+    {
+    CV_MAT_ELEM(* Rotation, double, i, j) = eigensolver_rotation(i,j);
+    }
+  }
+
+  //std::cout<<"five point na opencv mat: \n"<< fivept_kneip_rotation_ostatnia <<std::endl;
+}
+
+void Rotacja_eigensolver_plustranslacja (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, Eigen::Matrix3d* Rotation, Eigen::Vector3d* translation, char* fail)
+{
+
+  relative_pose::CentralRelativeAdapter adapter(bearingVectors1,bearingVectors2);
+
+  std::vector<int> indices = getNindices(bearingVectors1.size());
+  eigensolverOutput_t outModel;
+
+  (*Rotation)= relative_pose::eigensolver(adapter,indices,outModel);
+  (*translation) = outModel.translation;
+}
+
+
+void Rotacja_Kneip (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, CvMat* Translation, char* fail)
+{
+  //std::cout<< "Melduje sie kneip:\n";
+
+  int p1, p2, p3, p4, p5, p6, p7, p8;
+  losuj_8(7, &p1, &p2, &p3, &p4, &p5, &p6, &p7, &p8);
+
+  std::vector<rotation_t, Eigen::aligned_allocator<rotation_t> > Rotations;
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Vector3d translation_t;
+  Eigen::Vector3d translation_best;
+  std::vector<int> indices;
+  indices.push_back(p1);
+  indices.push_back(p2);
+  indices.push_back(p3);
+  indices.push_back(p4);
+  indices.push_back(p5);
+  indices.push_back(p6);
+  indices.push_back(p7);
+  indices.push_back(p8);
+  //std::cout<<"bearingVectors1 size " << bearingVectors1.size()<<std::endl;
+  //std::cout<<"bearingVectors2 size " << bearingVectors2.size()<<std::endl;
+
+  relative_pose::CentralRelativeAdapter adapter_kneip(bearingVectors1,bearingVectors2);
+
+  //std::cout<<"w kneipie przed algorytmemm kneipa" << std::endl;
+  Rotations = relative_pose::fivept_kneip (adapter_kneip,indices);
+  //std::cout<<"tu" <<std::endl;
+
+  if (Rotations.size() < 1 )
+  {
+    *fail = 1;
+    //std::cout<<"haha to jednak fail" <<std::endl;
+    for (int k = 0; Rotations.size() < 1; ++k)
+    {
+      std::vector<int> indices_failowe;
+      losuj_8(7, &p1, &p2, &p3, &p4, &p5, &p6, &p7, &p8);
+      indices_failowe.push_back(p1);
+      indices_failowe.push_back(p2);
+      indices_failowe.push_back(p3);
+      indices_failowe.push_back(p4);
+      indices_failowe.push_back(p5);
+      indices_failowe.push_back(p6);
+      indices_failowe.push_back(p7);
+      indices_failowe.push_back(p8);
+      Rotations = relative_pose::fivept_kneip (adapter_kneip,indices_failowe);
+      //std::cout<<"k failowe to "<<k<<"Rotations.size() "<<Rotations.size() <<std::endl;
+    }
+  }
+  if (Rotations.size() >= 1 )
+  {
+    *fail = 0;
+    double bestQuality = 1000000.0;
+    double quality = 0.0;
+    int bestQualityIndex = -1;
+
+    //std::cout<<"w kneipie przed triangulacja" <<std::endl;
+
+    for(size_t i = 0; i < Rotations.size(); ++i)
+    {
+      Rotation_test = Rotations[i];
+      relative_pose::CentralRelativeAdapter adapter_translacja (bearingVectors1, bearingVectors2, Rotation_test);
+      translation_t = relative_pose::twopt(adapter_translacja,true);
+
+
+      relative_pose::CentralRelativeAdapter adapter(bearingVectors1, bearingVectors2, Rotation_test);
+      adapter.sett12(translation_t);
+      adapter.setR12(Rotation_test);
+
+      transformation_t inverseSolution;
+      inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+      inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+      Eigen::Matrix<double,4,1> p_hom;
+      p_hom[3] = 1.0;
+      quality = 0.0;
+
+      for( size_t j = 0; j < indices.size(); ++j )
+      {
+        p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[j]);
+        bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+        bearingVector_t reprojection2 = inverseSolution * p_hom;
+        reprojection1 = reprojection1 / reprojection1.norm();
+        reprojection2 = reprojection2 / reprojection2.norm();
+        bearingVector_t f1 = adapter.getBearingVector1(indices[j]);
+        bearingVector_t f2 = adapter.getBearingVector2(indices[j]);
+
+        double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+        double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+        quality += reprojError1 + reprojError2;
+      }
+     // is quality better? (lower)
+      if( quality < bestQuality)
+      {
+      bestQuality = quality;
+      bestQualityIndex = i;
+      translation_best = translation_t;
+      }
+    }
+    //std::cout<< "najlepsza rotacja:\n"<<Rotations[bestQualityIndex];
+    for (int i= 0; i < 3; ++i)
+    {
+    CV_MAT_ELEM(* Translation, double, i, 0) = translation_best(i,0);
+    for (int j =0; j<3; ++j)
+      {
+      CV_MAT_ELEM(* Rotation, double, i, j) = (Rotations[bestQualityIndex])(i,j);
+      }
+    }
+    //std::cout<<" a to wypluwam: \n";
+    //wyswietl_macierz(Rotation);
+  }
+}
+
+void Rotacja_Nister (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, CvMat* Translation, char* fail)
+{
+  //std::cout<< "Melduje sie nister:\n";
+  Eigen::Matrix3d tempEssential;
+  std::vector<essential_t, Eigen::aligned_allocator<essential_t> > Esentials;
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d NajlepszaRotacja;
+  Eigen::Vector3d translation_t;
+  Eigen::Vector3d NajlepszaTranslacja;
+  std::vector<int> indices = getNindices(bearingVectors1.size());
+  std::vector<int> indices5 = getNindices(8);
+  //std::cout<<"bearingVectors1 size " << bearingVectors1.size()<<std::endl;
+  //std::cout<<"bearingVectors2 size " << bearingVectors2.size()<<std::endl;
+
+  relative_pose::CentralRelativeAdapter adapter_nister(bearingVectors1,bearingVectors2);
+  //std::cout<<"w nisterze przed algorytmemm nistera" << std::endl;
+  Esentials = relative_pose::fivept_nister (adapter_nister);
+  //std::cout<<"tu" <<std::endl;
+
+  if (Esentials.size() < 1 )
+  {
+    *fail = 1;
+    std::cout<<"losuje 8 punktow z "<<bearingVectors1.size() <<std::endl;
+    int p1, p2, p3, p4, p5, p6, p7, p8;
+    for (int k = 0;  Esentials.size() < 1; ++k)
+    {
+      std::vector<int> indices_failowe;
+      losuj_8(7, &p1, &p2, &p3, &p4, &p5, &p6, &p7, &p8);
+      indices_failowe.push_back(p1);
+      indices_failowe.push_back(p2);
+      indices_failowe.push_back(p3);
+      indices_failowe.push_back(p4);
+      indices_failowe.push_back(p5);
+      indices_failowe.push_back(p6);
+      indices_failowe.push_back(p7);
+      indices_failowe.push_back(p8);
+      Esentials = relative_pose::fivept_nister (adapter_nister,indices_failowe);
+      std::cout<<"k failowe to "<<k<<"Esentials.size() "<<Esentials.size() <<std::endl;
+    }
+  }
+  if (Esentials.size() >= 1)
+  {
+    *fail = 0;
+    double bestQuality = 1000000.0;
+    double quality = 0.0;
+
+    Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+    W(0,1) = -1;
+    W(1,0) = 1;
+    W(2,2) = 1;
+    //std::cout<<"w kneipie przed triangulacja" <<std::endl;
+
+     for(size_t j = 0; j < Esentials.size(); ++j)
+     {
+      tempEssential = Esentials[j];
+             
+      // decompose
+      Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+      tempEssential,
+      Eigen::ComputeFullV | Eigen::ComputeFullU );
+      Eigen::VectorXd singularValues = SVD.singularValues();
+                       
+      // check for bad essential matrix
+      if( singularValues[2] > 0.001 ) {};
+      // continue; //singularity constraints not applied -> removed because too harsh
+      if( singularValues[1] < 0.75 * singularValues[0] ) {};
+      // continue; //bad essential matrix -> removed because too harsh
+                  
+      // maintain scale
+      double scale = singularValues[0];
+      relative_pose::CentralRelativeAdapter adapter(bearingVectors1, bearingVectors2);
+          
+      for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+      {
+        if (iterator_1 == 0)
+        {
+          Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+          if( Rotation_test.determinant() < 0 )
+          {
+            Rotation_test = -Rotation_test;
+          }
+        }
+        else
+        {
+          Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+          if( Rotation_test.determinant() < 0 )
+          {
+            Rotation_test = -Rotation_test;
+          }
+        }
+        // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+        translation_t = -scale*SVD.matrixU().col(2);
+        for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+        {
+          if (iterator_1 == 0)
+          {
+            translation_t = -translation_t;
+          }
+          else
+          {
+            translation_t = -translation_t;
+          }
+                        
+          adapter.sett12(translation_t);
+          adapter.setR12(Rotation_test);
+          std::vector<int> indices = getNindices(bearingVectors1.size());
+                  
+          transformation_t inverseSolution;
+          inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+          inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+              
+          Eigen::Matrix<double,4,1> p_hom;
+          p_hom[3] = 1.0;
+          quality = 0.0;
+           
+          for( size_t i = 0; i < indices.size(); ++i )
+          {
+            p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+            bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+            bearingVector_t reprojection2 = inverseSolution * p_hom;
+            reprojection1 = reprojection1 / reprojection1.norm();
+            reprojection2 = reprojection2 / reprojection2.norm();
+            bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+            bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+
+            double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+            double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+            quality += reprojError1 + reprojError2;
+          }
+         // is quality better? (lower)
+          if( quality < bestQuality)
+          {
+          bestQuality = quality;
+          NajlepszaRotacja = Rotation_test;
+          NajlepszaTranslacja = translation_t;
+          }
+        }
+      }
+    } 
+      
+
+    
+    for (int i= 0; i < 3; ++i)
+    {
+    CV_MAT_ELEM(* Translation, double, i, 0) = NajlepszaTranslacja(i,0);
+    for (int j =0; j<3; ++j)
+      {
+      CV_MAT_ELEM(* Rotation, double, i, j) = NajlepszaRotacja(i,j);
+      }
+    }
+  }
+}
+
+
+void Rotacja_Eight (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > bearingVectors2, int l_punktow, CvMat* Rotation, CvMat* Translation, char* fail)
+{
+  //std::cout<< "Melduje sie eight:\n";
+  Eigen::Matrix3d tempEssential;
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d NajlepszaRotacja;
+  Eigen::Vector3d translation_t;
+  Eigen::Vector3d NajlepszaTranslacja;
+  //std::vector<int> indices = getNindices(bearingVectors1.size());
+  //std::vector<int> indices5 = getNindices(8);
+  //std::cout<<"bearingVectors1 size " << bearingVectors1.size()<<std::endl;
+  //std::cout<<"bearingVectors2 size " << bearingVectors2.size()<<std::endl;
+
+  relative_pose::CentralRelativeAdapter adapter_eightpt(bearingVectors1,bearingVectors2);
+  //std::cout<<"w nisterze przed algorytmemm nistera" << std::endl;
+  tempEssential = relative_pose::eightpt (adapter_eightpt);
+  //std::cout<<"tu" <<std::endl;
+
+  if (tempEssential.size() < 1 )
+  {
+    *fail = 1;
+    std::cout<<"haha to jednak fail" <<std::endl;
+    int p1, p2, p3, p4, p5, p6, p7, p8;
+    for (int k = 0;  tempEssential.size() < 1; ++k)
+    {
+      std::vector<int> indices_failowe;
+      losuj_8(7, &p1, &p2, &p3, &p4, &p5, &p6, &p7, &p8);
+      indices_failowe.push_back(p1);
+      indices_failowe.push_back(p2);
+      indices_failowe.push_back(p3);
+      indices_failowe.push_back(p4);
+      indices_failowe.push_back(p5);
+      indices_failowe.push_back(p6);
+      indices_failowe.push_back(p7);
+      indices_failowe.push_back(p8);
+      tempEssential = relative_pose::eightpt (adapter_eightpt,indices_failowe);
+      //std::cout<<"k failowe to "<<k<<"tempEssential.size() "<<tempEssential.size() <<std::endl;
+    }
+  }
+  if (tempEssential.size() >= 1 )
+  {
+    //std::cout<<"eight pt odom "<<std::endl;
+    *fail = 0;
+    double bestQuality = 1000000.0;
+    double quality = 0.0;
+
+    Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+    W(0,1) = -1;
+    W(1,0) = 1;
+    W(2,2) = 1;
+    //std::cout<<"w kneipie przed triangulacja" <<std::endl;
+
+
+          
+    // decompose
+    Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+    tempEssential,
+    Eigen::ComputeFullV | Eigen::ComputeFullU );
+    Eigen::VectorXd singularValues = SVD.singularValues();
+                       
+    // check for bad essential matrix
+    if( singularValues[2] > 0.001 ) {};
+    // continue; //singularity constraints not applied -> removed because too harsh
+    if( singularValues[1] < 0.75 * singularValues[0] ) {};
+    // continue; //bad essential matrix -> removed because too harsh
+                  
+    // maintain scale
+    double scale = singularValues[0];
+    relative_pose::CentralRelativeAdapter adapter(bearingVectors1, bearingVectors2);
+          
+    for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+    {
+      if (iterator_1 == 0)
+      {
+        Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+        if( Rotation_test.determinant() < 0 )
+        {
+          Rotation_test = -Rotation_test;
+        }
+      }
+      else
+      {
+        Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+        if( Rotation_test.determinant() < 0 )
+        {
+          Rotation_test = -Rotation_test;
+        }
+      }
+      // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+      translation_t = -scale*SVD.matrixU().col(2);
+      translation_t.normalize();
+      for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+      {
+        if (iterator_1 == 0)
+        {
+          translation_t = -translation_t;
+        }
+        else
+        {
+          translation_t = -translation_t;
+        }
+                        
+        adapter.sett12(translation_t);
+        adapter.setR12(Rotation_test);
+        std::vector<int> indices = getNindices(bearingVectors1.size());
+                  
+        transformation_t inverseSolution;
+        inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+        inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+              
+        Eigen::Matrix<double,4,1> p_hom;
+        p_hom[3] = 1.0;
+        quality = 0.0;
+           
+        for( size_t i = 0; i < indices.size(); ++i )
+        {
+          p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+          bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+          bearingVector_t reprojection2 = inverseSolution * p_hom;
+          reprojection1 = reprojection1 / reprojection1.norm();
+          reprojection2 = reprojection2 / reprojection2.norm();
+          bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+          bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+
+          double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+          double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+          quality += reprojError1 + reprojError2;
+        }
+        // is quality better? (lower)
+        if( quality < bestQuality)
+        {
+          bestQuality = quality;
+          NajlepszaRotacja = Rotation_test;
+          NajlepszaTranslacja = translation_t;
+        }
+      }
+    }
+    
+    for (int i= 0; i < 3; ++i)
+    {
+    CV_MAT_ELEM(* Translation, double, i, 0) = NajlepszaTranslacja(i,0);
+    //std::cout<<"ssssskala:  "<<sqrt( (cvmGet(Translation, 0, 0)*cvmGet(Translation, 0, 0)) + (cvmGet(Translation, 1, 0)*cvmGet(Translation, 1, 0)) + (cvmGet(Translation, 2, 0)*cvmGet(Translation, 2, 0))  )<<"## " <<std::endl;
+    for (int j =0; j<3; ++j)
+      {
+      CV_MAT_ELEM(* Rotation, double, i, j) = NajlepszaRotacja(i,j);
+      }
+    }
+  }
+}
+
+

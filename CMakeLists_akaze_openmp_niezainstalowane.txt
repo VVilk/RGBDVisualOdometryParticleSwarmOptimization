@@ -1,0 +1,42 @@
+cmake_minimum_required (VERSION 3.1.0)
+project (test)
+
+#include_directories(/usr/loclal/akaze)
+include_directories("akaze-master-autor/src/lib/")
+
+# AKAZE libraries
+set(AKAZE_SRCS
+    akaze-master-autor/src/lib/AKAZEConfig.h
+    akaze-master-autor/src/lib/AKAZE.h                  akaze-master-autor/src/lib/AKAZE.cpp
+    akaze-master-autor/src/lib/fed.h                    akaze-master-autor/src/lib/fed.cpp
+    akaze-master-autor/src/lib/nldiffusion_functions.h  akaze-master-autor/src/lib/nldiffusion_functions.cpp
+    akaze-master-autor/src/lib/utils.h                  akaze-master-autor/src/lib/utils.cpp)
+
+add_library(AKAZE ${AKAZE_SRCS})
+target_link_libraries(AKAZE ${OpenCV_LIBS})
+
+set(CMAKE_MODULE_PATH
+  ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+
+include(CXX11)
+check_for_cxx11_compiler(CXX11_COMPILER)
+# If a C++11 compiler is available, then set the appropriate flags
+IF(CXX11_COMPILER)
+  enable_cxx11()
+ENDIF(CXX11_COMPILER)
+
+find_package (Threads REQUIRED)
+find_package (OpenCV REQUIRED)
+#find_package (libAKAZE REQUIRED)
+
+  add_definitions (-Wall -march=native -O3)
+
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/modules/")
+  include_directories(${ADDITIONAL_INCLUDE_DIRS} /usr/local/include/eigen3 )
+  set(ADDITIONAL_INCLUDE_DIRS ${EIGEN_INCLUDE_DIRS} ${EIGEN_INCLUDE_DIR}/unsupported )
+
+include_directories(${ADDITIONAL_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/include)
+include_directories ("${PROJECT_SOURCE_DIR}")
+
+   add_executable (main main.cpp)
+   target_link_libraries (main ${OpenCV_LIBS} ${CMAKE_THREAD_LIBS_INIT} AKAZE)

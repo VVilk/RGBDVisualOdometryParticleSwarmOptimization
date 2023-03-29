@@ -1,0 +1,1702 @@
+#include "../odometria/odometrie.cpp"
+
+
+
+//max maksymalna liczba
+
+
+
+void ransac_v2(CvMat* points_mat_transposed_1, CvMat* points_mat_2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail)
+{
+  CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* Translation_test = cvCreateMat( 3, 1, CV_64FC1);
+  CvMat* punkty_ransac_transpozycja_1 = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* punkty_ransac_2 = cvCreateMat( 3, 3, CV_64FC1);
+  CvMat* col_mat_1 = cvCreateMat( 3, 1, CV_64FC1);
+  CvMat* point_1_after = cvCreateMat(3 ,1, CV_64FC1);
+  double odl = 0;
+  int inliers_count = 0;
+  int maxinliersbylo =0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+
+  //losuje 3 punkty do kabsch'a
+  int punkt_1, punkt_2, punkt_3;
+
+  srand( time(NULL));
+
+  while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+  {
+      losuj_3(point_count-1, &punkt_1, &punkt_2, &punkt_3);
+
+    //Przekazuje punkt 1 do kabscha
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 0, 0) =cvmGet(points_mat_transposed_1, 0, punkt_1);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 1, 0) =cvmGet(points_mat_transposed_1, 1, punkt_1);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 2, 0) =cvmGet(points_mat_transposed_1, 2, punkt_1);
+
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 0, 1) =cvmGet(points_mat_transposed_1, 0, punkt_2);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 1, 1) =cvmGet(points_mat_transposed_1, 1, punkt_2);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 2, 1) =cvmGet(points_mat_transposed_1, 2, punkt_2);
+
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 0, 2) =cvmGet(points_mat_transposed_1, 0, punkt_3);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 1, 2) =cvmGet(points_mat_transposed_1, 1, punkt_3);
+    CV_MAT_ELEM(* punkty_ransac_transpozycja_1, double, 2, 2) =cvmGet(points_mat_transposed_1, 2, punkt_3);
+
+    //Przekazuje punkty 2 do kabscha
+    CV_MAT_ELEM(* punkty_ransac_2, double, 0, 0) =cvmGet(points_mat_2, punkt_1, 0);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 0, 1) =cvmGet(points_mat_2, punkt_1, 1);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 0, 2) =cvmGet(points_mat_2, punkt_1, 2);
+
+    CV_MAT_ELEM(* punkty_ransac_2, double, 1, 0) =cvmGet(points_mat_2, punkt_2, 0);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 1, 1) =cvmGet(points_mat_2, punkt_2, 1);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 1, 2) =cvmGet(points_mat_2, punkt_2, 2);
+
+    CV_MAT_ELEM(* punkty_ransac_2, double, 2, 0) =cvmGet(points_mat_2, punkt_3, 0);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 2, 1) =cvmGet(points_mat_2, punkt_3, 1);
+    CV_MAT_ELEM(* punkty_ransac_2, double, 2, 2) =cvmGet(points_mat_2, punkt_3, 2);
+
+  
+    //kabsch(points_mat_transposed_1, points_mat_2, point_count, Rotation_test, Translation_test);
+    kabsch( punkty_ransac_transpozycja_1, punkty_ransac_2, 3, Rotation_test, Translation_test);
+    inliers_count = 0;
+    for (int i=0; i < point_count; ++i)
+    {
+      CV_MAT_ELEM(* col_mat_1, double, 0, 0) =cvmGet(points_mat_transposed_1, 0, i);
+      CV_MAT_ELEM(* col_mat_1, double, 1, 0) =cvmGet(points_mat_transposed_1, 1, i);
+      CV_MAT_ELEM(* col_mat_1, double, 2, 0) =cvmGet(points_mat_transposed_1, 2, i);
+     
+      cvGEMM (Rotation_test, col_mat_1, 1, Translation_test, 1, point_1_after, 0);
+      odl = sqrt (
+        pow(cvmGet( point_1_after, 0, 0) - cvmGet (points_mat_2, i, 0 ),2) +
+        pow(cvmGet( point_1_after, 1, 0) - cvmGet (points_mat_2, i, 1 ),2) +
+        pow(cvmGet( point_1_after, 2, 0) - cvmGet (points_mat_2, i, 2 ),2)
+                 );
+      if(odl< ejection_distance_tereshold)
+      {
+       *(maska+i) =1;
+       ++inliers_count;
+      }
+      else
+      {
+       *(maska+i) =0;
+      }
+    }
+    ++ransac_iterations;
+    if(inliers_count> maxinliersbylo)
+    {
+      maxinliersbylo= inliers_count;
+    } 
+    //std::cout<<"inlairs count to:"<< inliers_count<<" point count: "<< point_count<< "\n";
+  }
+  if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 1;
+  }
+  else
+  {
+    *ransac_fail = 0;
+    *liczba_inlierow = inliers_count;
+    //kabsch(points_inliers_mat_transposed_1, points_inliers_mat_2, inliers_count, Rotation, Translation);
+  }
+  cvReleaseMat(&Rotation_test);
+  cvReleaseMat(&Translation_test);
+  cvReleaseMat(&punkty_ransac_2);
+  cvReleaseMat(&punkty_ransac_transpozycja_1);
+  cvReleaseMat(&col_mat_1);
+  cvReleaseMat(&point_1_after);
+  //cvReleaseMat(&points_inliers_mat_1);
+  //cvReleaseMat(&points_inliers_mat_transposed_1);
+  //cvReleaseMat(&points_inliers_mat_2);
+}
+
+
+
+
+void ransac_v2_rotacja_eigensolver(std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  //CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  double odl = 0;
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+     //std::cout<<"inlairs count : "<< inliers_count<<std::endl;
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5 ;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+
+
+      Rotacja_eigensolver_plustranslacja( bearing_Vectors_1_ransac, bearing_Vectors_2_ransac, 5, &Rotation_test, &translation_t, &fail);
+      if(fail == 1)
+      {
+        std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {
+        relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2, Rotation_test);
+        adapter.sett12(translation_t);
+        adapter.setR12(Rotation_test);
+        std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+        transformation_t inverseSolution;
+        inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+        inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+        Eigen::Matrix<double,4,1> p_hom;
+        p_hom[3] = 1.0;
+        double distance;
+        inliers_count = 0;
+        ii = 0;
+
+        for( size_t i = 0; i < indices.size(); ++i )
+        {
+          p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+          bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+          bearingVector_t reprojection2 = inverseSolution * p_hom;
+          reprojection1 = reprojection1 / reprojection1.norm();
+          reprojection2 = reprojection2 / reprojection2.norm();
+          bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+          bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+
+          double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+          double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+          distance = reprojError1 + reprojError2;
+          czy_best_ransac(ii) = distance;
+          ++ii;
+  
+          if( distance < ejection_distance_tereshold)
+          {
+           *(maska+i) = 1;
+           ++inliers_count;
+          }
+          else
+          {
+           *(maska+i) = 0;
+          }
+        }
+        ++ransac_iterations;
+        if(inliers_count > *maxinliersbylo)
+        {
+          (*wyniki_best_ransac) = czy_best_ransac;
+          *maxinliersbylo = inliers_count;
+          *Rotation_best = Rotation_test;
+          *translation_best = translation_t;
+        } 
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+    
+      for(int iter =0; iter < (*bearing_Vectors1).size(); ++iter)
+      {
+        if( (*wyniki_best_ransac)(iter) < ejection_distance_tereshold)
+        {
+         *(maska+iter) = 1;
+        }
+        else
+        {
+         *(maska+iter) = 0;
+        }
+      }
+
+      *liczba_inlierow = *maxinliersbylo; // bo taka zostaje maska
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = *maxinliersbylo;
+    }
+  }
+}
+
+void ransac_v2_rotacja_eukl_eigensolver(std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  //CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  Eigen::Vector3d point_test;
+  Eigen::Vector3d point_po;
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  double odl = 0;
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+     //std::cout<<"inlairs count : "<< inliers_count<<std::endl;
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5 ;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+
+
+      Rotacja_eigensolver_plustranslacja( bearing_Vectors_1_ransac, bearing_Vectors_2_ransac, 5, &Rotation_test, &translation_t, &fail);
+      if(fail == 1)
+      {
+        std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {
+        inliers_count = 0;
+        for (int i=0; i < point_count; ++i)
+        {
+          point_test(0) =(*bearing_Vectors1)[i](0);
+          point_test(1) =(*bearing_Vectors1)[i](1);
+          point_test(2) =(*bearing_Vectors1)[i](2);
+     
+           
+          point_po = Rotation_test * point_test;
+          odl = sqrt (
+            pow( point_po(0) - (*bearing_Vectors1)[i](0),2) +
+            pow( point_po(1) - (*bearing_Vectors2)[i](1),2) +
+            pow( point_po(2) - (*bearing_Vectors2)[i](2),2)
+                     );
+          czy_best_ransac(i) = odl;
+          if(odl< ejection_distance_tereshold)
+          {
+            *(maska+i) =1;
+            ++inliers_count;
+          }
+          else
+          {
+            *(maska+i) =0;
+          }
+        }
+
+        ++ransac_iterations;
+        if(inliers_count > *maxinliersbylo)
+        {
+          (*wyniki_best_ransac) = czy_best_ransac;
+          *maxinliersbylo = inliers_count;
+          *Rotation_best = Rotation_test;
+          *translation_best = translation_t;
+        } 
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+      *liczba_inlierow = inliers_count;
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = inliers_count;
+    }
+  }
+}
+
+void ransac_v2_rotacja_nonlinear(std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail)
+{
+  CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+
+  CvMat* punkty_ransac_1 = cvCreateMat( 5, 3, CV_64FC1);
+  CvMat* punkty_ransac_2 = cvCreateMat( 5, 3, CV_64FC1);
+  CvMat* col_mat_1 = cvCreateMat( 3, 1, CV_64FC1);
+  CvMat* point_1_after = cvCreateMat(3 ,1, CV_64FC1);
+  double odl = 0;
+  int inliers_count = 0;
+  int maxinliersbylo =0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+
+
+  //std::cout<<"points mat 1:\n\n";
+  //wyswietl_macierz(points_mat_1);
+  //std::cout<<"points mat 2:\n\n";
+  //wyswietl_macierz(points_mat_2);
+
+  //losuje 3 punkty do kabsch'a
+  int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5 ;
+
+  srand( time(NULL));
+  while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+  {
+    char fail;
+    fail = 0;
+    punkt_1 = losuj(point_count-1);
+    losuj_2:
+    punkt_2 = losuj(point_count-1);
+    if (punkt_1 == punkt_2)
+      {
+         //std::cout<<"ponawiam losowanie 2 punktu  "<<punkt_1<<" "<<punkt_2<< std::endl;
+         goto losuj_2;
+      }
+    losuj_3:
+    punkt_3 = losuj(point_count-1);
+    if ((punkt_1 == punkt_3) || (punkt_2 == punkt_3))
+      {
+         //std::cout<<"ponawiam losowanie 3 punktu  "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<< std::endl;
+         goto losuj_3;
+      }
+    losuj_4:
+    punkt_4 = losuj(point_count-1);
+    if ((punkt_1 == punkt_4) || (punkt_2 == punkt_4) || (punkt_3 == punkt_4))
+      {
+         //std::cout<<"ponawiam losowanie 4 punktu  "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<< std::endl;
+         goto losuj_4;
+      }
+    losuj_5:
+    punkt_5 = losuj(point_count-1);
+    if ((punkt_1 == punkt_5) || (punkt_2 == punkt_5) || (punkt_3 == punkt_5) || (punkt_4 == punkt_5))
+      {
+         //std::cout<<"ponawiam losowanie 5 punktu  "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+         goto losuj_5;
+      }
+
+    //w eigensolverze minimum 2 punkty
+    bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+    bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+    bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+    bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+    bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+    //w eigensolverze minimum 2 punkty
+    bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+    bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+    bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+    bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+    bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+
+
+    Rotacja_nonlinear( bearing_Vectors_1_ransac, bearing_Vectors_2_ransac, 5, Rotation_test, &fail);
+    if(fail == 1)
+    {
+      std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+      *ransac_fail = 1;
+      //goto blad_rotacji;
+    }
+
+    //odom2( points_mat_1, points_mat_2, point_count, Rotation_test, Translation_test);
+    inliers_count = 0;
+    for (int i=0; i < point_count; ++i)
+    {
+      CV_MAT_ELEM(* col_mat_1, double, 0, 0) =(*bearing_Vectors1)[i](0);
+      CV_MAT_ELEM(* col_mat_1, double, 1, 0) =(*bearing_Vectors1)[i](1);
+      CV_MAT_ELEM(* col_mat_1, double, 2, 0) =(*bearing_Vectors1)[i](2);
+     
+      cvGEMM (Rotation_test, col_mat_1, 1, 0, 1, point_1_after, 0);
+      odl = sqrt (
+        pow(cvmGet( point_1_after, 0, 0) - (*bearing_Vectors1)[i](0),2) +
+        pow(cvmGet( point_1_after, 1, 0) - (*bearing_Vectors2)[i](1),2) +
+        pow(cvmGet( point_1_after, 2, 0) - (*bearing_Vectors2)[i](2),2)
+                 );
+      if(odl< ejection_distance_tereshold)
+      {
+       *(maska+i) =1;
+       ++inliers_count;
+      }
+      else
+      {
+       *(maska+i) =0;
+      }
+    }
+    ++ransac_iterations;
+    if(inliers_count> maxinliersbylo)
+    {
+      maxinliersbylo= inliers_count;
+    } 
+    //std::cout<<"inlairs count to:"<< inliers_count<<" point count: "<< point_count<< "\n";
+  }
+  if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 1;
+  }
+  else
+  {
+    *ransac_fail = 0;
+    *liczba_inlierow = inliers_count;
+    //kabsch(points_inliers_mat_transposed_1, points_inliers_mat_2, inliers_count, Rotation, Translation);
+  }
+  cvReleaseMat(&Rotation_test);
+  cvReleaseMat(&punkty_ransac_2);
+  cvReleaseMat(&punkty_ransac_1);
+  cvReleaseMat(&col_mat_1);
+  cvReleaseMat(&point_1_after);
+  //cvReleaseMat(&points_inliers_mat_1);
+  //cvReleaseMat(&points_inliers_mat_transposed_1);
+  //cvReleaseMat(&points_inliers_mat_2);
+}
+
+void ransac_v2_rotacja_kneip (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  //CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  Eigen::Matrix3d Rotation_test;
+  std::vector<rotation_t, Eigen::aligned_allocator<rotation_t> > Rotations_tests;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5;
+    punkt_1 = 0;
+    punkt_2 = 0;
+    punkt_3 = 0;
+    punkt_4 = 0;
+    punkt_5 = 0;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+
+      blad_rotacji:
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+
+      relative_pose::CentralRelativeAdapter adapter_kneip(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      std::vector<int> indicesk = getNindices(5);
+      Rotations_tests = relative_pose::fivept_kneip(adapter_kneip,indicesk);
+
+      if(Rotations_tests.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {   
+        for(size_t j = 0; j < Rotations_tests.size(); ++j)
+        {
+          Rotation_test = Rotations_tests[j];
+          relative_pose::CentralRelativeAdapter adapter_translacja (bearing_Vectors_1_ransac, bearing_Vectors_2_ransac, Rotation_test);
+          translation_t = relative_pose::twopt(adapter_translacja,true);
+
+
+          relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2, Rotation_test);
+          adapter.sett12(translation_t);
+          adapter.setR12(Rotation_test);
+          std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+          transformation_t inverseSolution;
+          inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+          inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+          Eigen::Matrix<double,4,1> p_hom;
+          p_hom[3] = 1.0;
+          double distance;
+          inliers_count = 0;
+          ii = 0;
+
+          for( size_t i = 0; i < indices.size(); ++i )
+          {
+            p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+            bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+            bearingVector_t reprojection2 = inverseSolution * p_hom;
+            reprojection1 = reprojection1 / reprojection1.norm();
+            reprojection2 = reprojection2 / reprojection2.norm();
+            bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+            bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+ 
+            double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+            double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+            distance = reprojError1 + reprojError2;
+            czy_best_ransac(ii) = distance;
+            ++ii;
+
+            if( distance < ejection_distance_tereshold)
+            {
+             *(maska+i) = 1;
+             ++inliers_count;
+            }
+            else
+            {
+             *(maska+i) = 0;
+            }
+          }
+          if(inliers_count > *maxinliersbylo)
+          {
+            (*wyniki_best_ransac) = czy_best_ransac;
+            *maxinliersbylo = inliers_count;
+            *Rotation_best = Rotation_test;
+            *translation_best = translation_t;
+          }
+        } 
+        ++ransac_iterations;
+      }
+      if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+      {
+        *liczba_inlierow = inliers_count;
+        *ransac_fail = 1;
+      }
+      else
+      {
+        *ransac_fail = 0;
+        *liczba_inlierow = inliers_count;
+      }
+    }
+  }
+}
+void ransac_v2_rotacja_eukl_kneip (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  //CvMat* Rotation_test = cvCreateMat( 3, 3, CV_64FC1);
+  Eigen::Matrix3d Rotation_test;
+  std::vector<rotation_t, Eigen::aligned_allocator<rotation_t> > Rotations_tests;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  Eigen::Vector3d point_test;
+  Eigen::Vector3d point_po;
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  double odl = 0;
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5;
+    punkt_1 = 0;
+    punkt_2 = 0;
+    punkt_3 = 0;
+    punkt_4 = 0;
+    punkt_5 = 0;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+
+      blad_rotacji:
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+
+      relative_pose::CentralRelativeAdapter adapter_kneip(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      std::vector<int> indicesk = getNindices(5);
+
+      std::cout<<bearing_Vectors_1_ransac[0]<<" "<<bearing_Vectors_1_ransac[1]<<" "<<bearing_Vectors_1_ransac[2]<<" "<<bearing_Vectors_1_ransac[3]<<" "<<bearing_Vectors_1_ransac[4]<<"\n ";
+      std::cout<<bearing_Vectors_2_ransac[0]<<" "<<bearing_Vectors_2_ransac[1]<<" "<<bearing_Vectors_2_ransac[2]<<" "<<bearing_Vectors_2_ransac[3]<<" "<<bearing_Vectors_2_ransac[4]<<"\n ";
+
+      Rotations_tests = relative_pose::fivept_kneip(adapter_kneip,indicesk);
+
+      if(Rotations_tests.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {   
+        //Eigen::Matrix<double,3,4> transformacja;
+        //inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+        //inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+        for(size_t j = 0; j < Rotations_tests.size(); ++j)
+        {
+          Rotation_test = Rotations_tests[j];
+          inliers_count = 0;
+          for (int i=0; i < point_count; ++i)
+          {
+            point_test(0) =(*bearing_Vectors1)[i](0);
+            point_test(1) =(*bearing_Vectors1)[i](1);
+            point_test(2) =(*bearing_Vectors1)[i](2);
+     
+           
+            point_po = Rotation_test * point_test;
+            odl = sqrt (
+              pow( point_po(0) - (*bearing_Vectors1)[i](0),2) +
+              pow( point_po(1) - (*bearing_Vectors2)[i](1),2) +
+              pow( point_po(2) - (*bearing_Vectors2)[i](2),2)
+                       );
+            czy_best_ransac(i) = odl;
+           if(odl< ejection_distance_tereshold)
+           {
+            *(maska+i) =1;
+            ++inliers_count;
+           }
+           else
+           {
+            *(maska+i) =0;
+           }
+         }
+
+          if(inliers_count > *maxinliersbylo)
+          {
+            (*wyniki_best_ransac) = czy_best_ransac;
+            *maxinliersbylo = inliers_count;
+            *Rotation_best = Rotation_test;
+            *translation_best = translation_t;
+          }
+        } 
+        ++ransac_iterations;  
+      }
+      if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+      {
+        *liczba_inlierow = inliers_count;
+        *ransac_fail = 1;
+      }
+      else
+      {
+        *ransac_fail = 0;
+        *liczba_inlierow = inliers_count;
+      }
+    }
+  }
+}
+
+
+void ransac_v2_rotacja_nister (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d tempEssential;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  Eigen::Vector3d bearingvector;
+
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+
+  std::cout<<"w ransac nister\n";
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5;
+/*    punkt_1 = 0;
+    punkt_2 = 0;
+    punkt_3 = 0;
+    punkt_4 = 0;
+    punkt_5 = 0;*/
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+
+      //blad_rotacji: daje na koniec petli while zeby przestalo jak za duzo razy- wiecej niz max ransac iterations
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+/*
+      bearingvector = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_5];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+
+      bearingvector = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_5];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+*/
+
+      relative_pose::CentralRelativeAdapter aadapter(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      //std::cout<<"przed: "<<(int)fail<< std::endl;
+      std::vector<essential_t, Eigen::aligned_allocator<essential_t> > Esentials_tests;
+      //std::cout<<"esentials size przed: \n"<< Esentials_tests.size()<<std::endl;
+      Esentials_tests = relative_pose::fivept_nister(aadapter);
+      //std::cout<<"po: "<<(int)fail<< std::endl;
+      if(Esentials_tests.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        *ransac_fail = 1;
+        //std::cout<<"r"<<ransac_iterations<<" "<<std::flush;  
+        ++ransac_iterations;
+        // tu bylo: goto blad_rotacji;
+      }
+      else
+      {   
+        //std::cout<<"r"<<ransac_iterations<<" "<<std::flush;               
+        Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+        W(0,1) = -1;
+        W(1,0) = 1;
+        W(2,2) = 1;
+        //std::cout<<"ransac nister 2"<< std::endl;
+        for(size_t j = 0; j < Esentials_tests.size(); ++j)
+        {
+          tempEssential = Esentials_tests[j];
+               
+          // decompose
+          Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+          tempEssential,
+          Eigen::ComputeFullV | Eigen::ComputeFullU );
+          Eigen::VectorXd singularValues = SVD.singularValues();
+                         
+          // check for bad essential matrix
+          if( singularValues[2] > 0.001 ) {};
+          // continue; //singularity constraints not applied -> removed because too harsh
+          if( singularValues[1] < 0.75 * singularValues[0] ) {};
+          // continue; //bad essential matrix -> removed because too harsh
+                    
+          // maintain scale
+          double scale = singularValues[0];
+          relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2);
+           
+          for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+          {
+            if (iterator_1 == 0)
+            {
+              Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+              if( Rotation_test.determinant() < 0 )
+              {
+                Rotation_test = -Rotation_test;
+              }
+            }
+            else
+            {
+              Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+              if( Rotation_test.determinant() < 0 )
+              {
+                Rotation_test = -Rotation_test;
+              }
+            }
+            // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+            translation_t = -scale*SVD.matrixU().col(2);
+            for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+            {
+              if (iterator_1 == 0)
+              {
+                translation_t = -translation_t;
+              }
+              else
+              {
+                translation_t = -translation_t;
+              }
+              //std::cout<<"ransac nister 3"<< std::endl; 
+              adapter.sett12(translation_t);
+              adapter.setR12(Rotation_test);
+              std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+              transformation_t inverseSolution;
+              inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+              inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+              Eigen::Matrix<double,4,1> p_hom;
+              p_hom[3] = 1.0;
+              double distance;
+              inliers_count = 0;
+              ii = 0;
+ 
+              for( size_t i = 0; i < indices.size(); ++i )
+              {
+                //std::cout<<" przed triangulate 2\n";
+                p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+                //std::cout<<" po triangulate 2\n";
+                bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+                bearingVector_t reprojection2 = inverseSolution * p_hom;
+                reprojection1 = reprojection1 / reprojection1.norm();
+                reprojection2 = reprojection2 / reprojection2.norm();
+                bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+                bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+  
+                double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+                double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+                distance = reprojError1 + reprojError2;
+                czy_best_ransac(ii) = distance;
+                ++ii;
+
+                if( distance < ejection_distance_tereshold)
+                {
+                 *(maska+i) = 1;
+                 ++inliers_count;
+                }
+                else
+                {
+                 *(maska+i) = 0;
+                }
+              }
+
+              if(inliers_count > *maxinliersbylo)
+              {
+                (*wyniki_best_ransac) = czy_best_ransac;
+                *maxinliersbylo = inliers_count;
+                *Rotation_best = Rotation_test;
+                *translation_best = translation_t;
+              }
+            }       
+          }
+        }
+      ++ransac_iterations;
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+      *liczba_inlierow = inliers_count;
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = inliers_count;
+    }
+  }
+}
+
+void ransac_v2_rotacja_eukl_nister (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d tempEssential;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  Eigen::Vector3d point_test;
+  Eigen::Vector3d point_po;
+
+  int liczba_losowan = 5;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  Eigen::Vector3d bearingvector;
+
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  double odl;
+  //std::cout<<"w ransac nister\n";
+
+  for( ; ii < point_count; ++ii )
+  {
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+    //std::cout<<" przyspieszam\n";
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5;
+    punkt_1 = 0;
+    punkt_2 = 0;
+    punkt_3 = 0;
+    punkt_4 = 0;
+    punkt_5 = 0;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+      //std::cout<<"ransac_iterations" <<ransac_iterations<< "max_ransac_iterations "<<max_ransac_iterations<<std::endl;
+      //std::cout<<"\nransac:  "<<ransac_iterations<<std::endl;
+      //blad_rotacji: daje na koniec petli while zeby przestalo jak za duzo razy- wiecej niz max ransac iterations
+      char fail;
+      fail = 0;
+      losuj_5(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5);
+      std::cout<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<<std::endl;	
+
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+/*
+      bearingvector = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors1)[punkt_5];
+      bearing_Vectors_1_ransac.push_back(bearingvector);
+
+      bearingvector = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+      bearingvector = (*bearing_Vectors2)[punkt_5];
+      bearing_Vectors_2_ransac.push_back(bearingvector);
+*/
+      //std::cout<<"a"<<std::flush;
+      relative_pose::CentralRelativeAdapter aadapter(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      //std::cout<<"b"<<std::flush;
+      //std::cout<<"przed: "<<(int)fail<< std::endl;
+
+      std::vector<essential_t, Eigen::aligned_allocator<essential_t> > Esentials_tests;
+      //std::cout<<"esentials size przed: \n"<< Esentials_tests.size()<<std::endl;
+      //std::cout<<"c"<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<<std::flush;
+      std::cout<<bearing_Vectors_1_ransac[0]<<" "<<bearing_Vectors_1_ransac[1]<<" "<<bearing_Vectors_1_ransac[2]<<" "<<bearing_Vectors_1_ransac[3]<<" "<<bearing_Vectors_1_ransac[4]<<"\n ";
+      std::cout<<bearing_Vectors_2_ransac[0]<<" "<<bearing_Vectors_2_ransac[1]<<" "<<bearing_Vectors_2_ransac[2]<<" "<<bearing_Vectors_2_ransac[3]<<" "<<bearing_Vectors_2_ransac[4]<<"\n ";
+      //std::cout<<"fivept_nister \n";
+      //std::cout<<"bearing_Vectors_1_ransac\n"<<bearing_Vectors_1_ransac<<"\nbearing_Vectors_2_ransac\n"<<bearing_Vectors_1_ransac<<std::endl;
+      Esentials_tests = relative_pose::fivept_nister(aadapter);
+      //std::cout<<"po fivept_nister \n";
+      //std::cout<<"d"<<std::flush;
+      //std::cout<<"po: "<<(int)fail<< std::endl;
+      if(Esentials_tests.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        //*ransac_fail = 1;
+        //std::cout<<"r"<<ransac_iterations<<" "<<std::flush;  
+        ++ransac_iterations;
+         //std::cout<<"essential fail <1 \n";
+        // tu bylo: goto blad_rotacji;
+        //std::cout<<"esential m 1"<<std::flush;
+      }
+      else
+      {   
+        //std::cout<<"r"<<ransac_iterations<<" "<<std::flush;               
+        Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+        //std::cout<<"l"<<std::flush;
+        W(0,1) = -1;
+        W(1,0) = 1;
+        W(2,2) = 1;
+        //std::cout<<"ransac nister 2"<< std::endl;
+        for(size_t j = 0; j < Esentials_tests.size(); ++j)
+        {
+          tempEssential = Esentials_tests[j];
+          //std::cout<<"przed svd\n";
+          // decompose
+          Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+          tempEssential,
+          Eigen::ComputeFullV | Eigen::ComputeFullU );
+          Eigen::VectorXd singularValues = SVD.singularValues();
+                         
+          // check for bad essential matrix
+          if( singularValues[2] > 0.001 ) {};
+          // continue; //singularity constraints not applied -> removed because too harsh
+          if( singularValues[1] < 0.75 * singularValues[0] ) {};
+          // continue; //bad essential matrix -> removed because too harsh
+                    
+          // maintain scale
+          double scale = singularValues[0];
+          relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2);
+          //std::cout<<"po adapter\n";
+          for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+          {
+            if (iterator_1 == 0)
+            {
+              Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+              if( Rotation_test.determinant() < 0 )
+              {
+                Rotation_test = -Rotation_test;
+              }
+            }
+            else
+            {
+              Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+              if( Rotation_test.determinant() < 0 )
+              {
+                Rotation_test = -Rotation_test;
+              }
+            }
+            // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+           /* translation_t = -scale*SVD.matrixU().col(2);
+            for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+            {
+              if (iterator_1 == 0)
+              {
+                translation_t = -translation_t;
+              }
+              else
+              {
+                translation_t = -translation_t;
+              }
+              //std::cout<<"ransac nister 3"<< std::endl; 
+              adapter.sett12(translation_t);
+              adapter.setR12(Rotation_test);
+              std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+              transformation_t inverseSolution;
+              inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+              inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+              Eigen::Matrix<double,4,1> p_hom;
+              p_hom[3] = 1.0;*/
+              inliers_count = 0;
+              //ii = 0;
+              //std::cout<<"e"<< std::flush;
+              //std::cout<<" sqrt\n";
+              for (int i=0; i < point_count; ++i)
+              {
+                point_test(0) =(*bearing_Vectors1)[i](0);
+                point_test(1) =(*bearing_Vectors1)[i](1);
+                point_test(2) =(*bearing_Vectors1)[i](2);
+     
+           
+                point_po = Rotation_test * point_test;
+                odl = sqrt (
+                  pow( point_po(0) - (*bearing_Vectors1)[i](0),2) +
+                  pow( point_po(1) - (*bearing_Vectors2)[i](1),2) +
+                  pow( point_po(2) - (*bearing_Vectors2)[i](2),2)
+                       );
+                czy_best_ransac(i) = odl;
+                if(odl< ejection_distance_tereshold)
+                {
+                 *(maska+i) =1;
+                 ++inliers_count;
+                }
+                else
+                {
+                 *(maska+i) =0;
+                }
+              }
+              //std::cout<<"po \n";
+              if(inliers_count > *maxinliersbylo)
+              {
+                (*wyniki_best_ransac) = czy_best_ransac;
+                *maxinliersbylo = inliers_count;
+                *Rotation_best = Rotation_test;
+                *translation_best = translation_t;
+              }
+                 
+          }
+        }
+      ++ransac_iterations;
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+      *liczba_inlierow = inliers_count;
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = inliers_count;
+    }
+  }
+}
+
+
+void ransac_v2_rotacja_eight (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d tempEssential;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  int liczba_losowan = 8;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    //std::cout<<(*wyniki_best_ransac)(ii)<<" ";
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5, punkt_6, punkt_7, punkt_8 ;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+
+      blad_rotacji:
+      char fail;
+      fail = 0;
+      losuj_8(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5, &punkt_6, &punkt_7, &punkt_8);
+    
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+      bearing_Vectors_1_ransac[5] = (*bearing_Vectors1)[punkt_6];
+      bearing_Vectors_1_ransac[6] = (*bearing_Vectors1)[punkt_7];
+      bearing_Vectors_1_ransac[7] = (*bearing_Vectors1)[punkt_8];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+      bearing_Vectors_2_ransac[5] = (*bearing_Vectors2)[punkt_6];
+      bearing_Vectors_2_ransac[6] = (*bearing_Vectors2)[punkt_7];
+      bearing_Vectors_2_ransac[7] = (*bearing_Vectors2)[punkt_8];
+
+      relative_pose::CentralRelativeAdapter adapter_eightpt(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      //std::cout<<"przed: "<< std::endl;
+      //std::cout<<"esentials size przed: \n"<< Esentials_tests.size()<<std::endl;
+      tempEssential = relative_pose::eightpt(adapter_eightpt);
+      //std::cout<<"po: "<< std::endl;
+      if(tempEssential.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        std::cout<<"ransac fail: "<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {
+        Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+        W(0,1) = -1;
+        W(1,0) = 1;
+        W(2,2) = 1;
+        //std::cout<<"ransac nister 2"<< std::endl;
+
+               
+        // decompose
+        Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+        tempEssential,
+        Eigen::ComputeFullV | Eigen::ComputeFullU );
+        Eigen::VectorXd singularValues = SVD.singularValues();
+                         
+        // check for bad essential matrix
+        if( singularValues[2] > 0.001 ) {};
+        // continue; //singularity constraints not applied -> removed because too harsh
+        if( singularValues[1] < 0.75 * singularValues[0] ) {};
+        // continue; //bad essential matrix -> removed because too harsh
+                  
+        // maintain scale
+        double scale = singularValues[0];
+        relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2);
+           
+        for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+        {
+          if (iterator_1 == 0)
+          {
+            Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+            if( Rotation_test.determinant() < 0 )
+            {
+              Rotation_test = -Rotation_test;
+            }
+          }
+          else
+          {
+            Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+            if( Rotation_test.determinant() < 0 )
+            {
+              Rotation_test = -Rotation_test;
+            }
+          }
+          // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+          translation_t = -scale*SVD.matrixU().col(2);
+          for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+          {
+            if (iterator_1 == 0)
+            {
+              translation_t = -translation_t;
+            }
+            else
+            {
+              translation_t = -translation_t;
+            }
+            //std::cout<<"ransac nister 3"<< std::endl; 
+            adapter.sett12(translation_t);
+            adapter.setR12(Rotation_test);
+            std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+            transformation_t inverseSolution;
+            inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+            inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+            Eigen::Matrix<double,4,1> p_hom;
+            p_hom[3] = 1.0;
+            double distance;
+            inliers_count = 0;
+            ii = 0;
+
+            for( size_t i = 0; i < indices.size(); ++i )
+            {
+              p_hom.block<3,1>(0,0) = opengv::triangulation::triangulate2(adapter,indices[i]);
+              bearingVector_t reprojection1 = p_hom.block<3,1>(0,0);
+              bearingVector_t reprojection2 = inverseSolution * p_hom;
+              reprojection1 = reprojection1 / reprojection1.norm();
+              reprojection2 = reprojection2 / reprojection2.norm();
+              bearingVector_t f1 = adapter.getBearingVector1(indices[i]);
+              bearingVector_t f2 = adapter.getBearingVector2(indices[i]);
+
+              double reprojError1 = 1.0 - (f1.transpose() * reprojection1);
+              double reprojError2 = 1.0 - (f2.transpose() * reprojection2);
+              distance = reprojError1 + reprojError2;
+              czy_best_ransac(ii) = distance;
+              ++ii;
+
+              if( distance < ejection_distance_tereshold)
+              {
+               *(maska+i) = 1;
+               ++inliers_count;
+              }
+              else
+              {
+               *(maska+i) = 0;
+              }
+            }
+            ++ransac_iterations;
+            if(inliers_count > *maxinliersbylo)
+            {
+              (*wyniki_best_ransac) = czy_best_ransac;
+              *maxinliersbylo = inliers_count;
+              *Rotation_best = Rotation_test;
+              *translation_best = translation_t;
+            }
+          }       
+        }
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+      *liczba_inlierow = inliers_count;
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = inliers_count;
+    }
+  }
+}
+
+void ransac_v2_rotacja_eukl_eight (std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors1, std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d> > *bearing_Vectors2, int point_count, char* maska, double ejection_distance_tereshold, double fidelity, int max_ransac_iterations, int* liczba_inlierow, char* ransac_fail, Eigen::Matrix3d *Rotation_best, Eigen::Vector3d* translation_best, int* maxinliersbylo, Eigen::VectorXd* wyniki_best_ransac)
+{
+
+  Eigen::Matrix3d Rotation_test;
+  Eigen::Matrix3d tempEssential;
+  Eigen::Vector3d translation_t;
+  Eigen::VectorXd czy_best_ransac (point_count);
+
+  Eigen::Vector3d point_test;
+  Eigen::Vector3d point_po;
+
+  int liczba_losowan = 8;
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_1_ransac (liczba_losowan);
+  std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d> > bearing_Vectors_2_ransac (liczba_losowan);
+
+  int inliers_count = 0;
+  int min_inliers=(int)((point_count*fidelity)+1);
+  int ransac_iterations = 0;
+  int ii = 0;
+  double odl = 0;
+  
+  for( ; ii < point_count; ++ii )
+  {
+    //std::cout<<(*wyniki_best_ransac)(ii)<<" ";
+    if( (*wyniki_best_ransac)(ii) < ejection_distance_tereshold)
+    {
+     *(maska+ii) = 1;
+     ++inliers_count;
+    }
+    else
+    {
+     *(maska+ii) = 0;
+     }
+  }
+  if (inliers_count >= min_inliers)
+  {
+    *liczba_inlierow = inliers_count;
+    *ransac_fail = 0;
+  }
+  else
+  {
+    inliers_count = 0;
+    int punkt_1, punkt_2, punkt_3, punkt_4, punkt_5, punkt_6, punkt_7, punkt_8 ;
+
+    srand( time(NULL));
+    while ((inliers_count < min_inliers) && (ransac_iterations != max_ransac_iterations))
+    {
+
+      blad_rotacji:
+      char fail;
+      fail = 0;
+      losuj_8(point_count-1, &punkt_1, &punkt_2, &punkt_3,  &punkt_4, &punkt_5, &punkt_6, &punkt_7, &punkt_8);
+    
+      bearing_Vectors_1_ransac[0] = (*bearing_Vectors1)[punkt_1];
+      bearing_Vectors_1_ransac[1] = (*bearing_Vectors1)[punkt_2];
+      bearing_Vectors_1_ransac[2] = (*bearing_Vectors1)[punkt_3];
+      bearing_Vectors_1_ransac[3] = (*bearing_Vectors1)[punkt_4];
+      bearing_Vectors_1_ransac[4] = (*bearing_Vectors1)[punkt_5];
+      bearing_Vectors_1_ransac[5] = (*bearing_Vectors1)[punkt_6];
+      bearing_Vectors_1_ransac[6] = (*bearing_Vectors1)[punkt_7];
+      bearing_Vectors_1_ransac[7] = (*bearing_Vectors1)[punkt_8];
+
+      bearing_Vectors_2_ransac[0] = (*bearing_Vectors2)[punkt_1];
+      bearing_Vectors_2_ransac[1] = (*bearing_Vectors2)[punkt_2];
+      bearing_Vectors_2_ransac[2] = (*bearing_Vectors2)[punkt_3];
+      bearing_Vectors_2_ransac[3] = (*bearing_Vectors2)[punkt_4];
+      bearing_Vectors_2_ransac[4] = (*bearing_Vectors2)[punkt_5];
+      bearing_Vectors_2_ransac[5] = (*bearing_Vectors2)[punkt_6];
+      bearing_Vectors_2_ransac[6] = (*bearing_Vectors2)[punkt_7];
+      bearing_Vectors_2_ransac[7] = (*bearing_Vectors2)[punkt_8];
+
+      relative_pose::CentralRelativeAdapter adapter_eightpt(bearing_Vectors_1_ransac,bearing_Vectors_2_ransac);
+      //std::cout<<"przed: "<< std::endl;
+      //std::cout<<"esentials size przed: \n"<< Esentials_tests.size()<<std::endl;
+      tempEssential = relative_pose::eightpt(adapter_eightpt);
+      //std::cout<<"po: "<< std::endl;
+      if(tempEssential.size() < 1)
+      {
+        //std::cout<<"goto 2222!!!!!   fail: "<<(int)fail<< std::endl;
+        //std::cout<<"size bearing vectors 1: "<<(*bearing_Vectors1).size()<< std::endl;
+        //std::cout<<"punkty: "<<punkt_1<<" "<<punkt_2<<" "<<punkt_3<<" "<<punkt_4<<" "<<punkt_5<< std::endl;
+        *ransac_fail = 1;
+        ++ransac_iterations;
+      }
+      else
+      {
+        Eigen::Matrix3d W = Eigen::Matrix3d::Zero();
+        W(0,1) = -1;
+        W(1,0) = 1;
+        W(2,2) = 1;
+        //std::cout<<"ransac nister 2"<< std::endl;
+
+               
+        // decompose
+        Eigen::JacobiSVD< Eigen::Matrix3d > SVD(
+        tempEssential,
+        Eigen::ComputeFullV | Eigen::ComputeFullU );
+        Eigen::VectorXd singularValues = SVD.singularValues();
+                         
+        // check for bad essential matrix
+        if( singularValues[2] > 0.001 ) {};
+        // continue; //singularity constraints not applied -> removed because too harsh
+        if( singularValues[1] < 0.75 * singularValues[0] ) {};
+        // continue; //bad essential matrix -> removed because too harsh
+                  
+        // maintain scale
+        double scale = singularValues[0];
+        relative_pose::CentralRelativeAdapter adapter(*bearing_Vectors1, *bearing_Vectors2);
+           
+        for (int iterator_1 = 0; iterator_1 < 2; ++iterator_1)
+        {
+          if (iterator_1 == 0)
+          {
+            Rotation_test = SVD.matrixU() * W * SVD.matrixV().transpose();
+            if( Rotation_test.determinant() < 0 )
+            {
+              Rotation_test = -Rotation_test;
+            }
+          }
+          else
+          {
+            Rotation_test = SVD.matrixU() * W.transpose() * SVD.matrixV().transpose();
+            if( Rotation_test.determinant() < 0 )
+            {
+              Rotation_test = -Rotation_test;
+            }
+          }
+          // przy pierwszej translacji też jest minus więc najpierw będzie plus a potem minus
+          /*translation_t = -scale*SVD.matrixU().col(2);
+          for (int iterator_2 = 0; iterator_2 < 2; ++iterator_2)
+          {
+            if (iterator_1 == 0)
+            {
+              translation_t = -translation_t;
+            }
+            else
+            {
+              translation_t = -translation_t;
+            }
+            //std::cout<<"ransac nister 3"<< std::endl; 
+            adapter.sett12(translation_t);
+            adapter.setR12(Rotation_test);
+            std::vector<int> indices = getNindices((*bearing_Vectors1).size());
+
+            transformation_t inverseSolution;
+            inverseSolution.block<3,3>(0,0) = Rotation_test.transpose();
+            inverseSolution.col(3) = -inverseSolution.block<3,3>(0,0)*translation_t;
+
+            Eigen::Matrix<double,4,1> p_hom;
+            p_hom[3] = 1.0;
+            double distance;*/
+            inliers_count = 0;
+            //ii = 0;
+
+            for (int i=0; i < point_count; ++i)
+            {
+              point_test(0) =(*bearing_Vectors1)[i](0);
+              point_test(1) =(*bearing_Vectors1)[i](1);
+              point_test(2) =(*bearing_Vectors1)[i](2);
+     
+           
+              point_po = Rotation_test * point_test;
+              odl = sqrt (
+                pow( point_po(0) - (*bearing_Vectors1)[i](0),2) +
+                pow( point_po(1) - (*bearing_Vectors2)[i](1),2) +
+                pow( point_po(2) - (*bearing_Vectors2)[i](2),2)
+                     );
+              czy_best_ransac(i) = odl;
+              if(odl< ejection_distance_tereshold)
+              {
+               *(maska+i) =1;
+               ++inliers_count;
+              }
+              else
+              {
+               *(maska+i) =0;
+              }
+            }
+
+            if(inliers_count > *maxinliersbylo)
+            {
+              (*wyniki_best_ransac) = czy_best_ransac;
+              *maxinliersbylo = inliers_count;
+              *Rotation_best = Rotation_test;
+              *translation_best = translation_t;
+            }
+                 
+        }
+        ++ransac_iterations;
+      }
+    }
+    if((inliers_count < min_inliers) && (ransac_iterations == max_ransac_iterations))
+    {
+      *liczba_inlierow = inliers_count;
+      *ransac_fail = 1;
+    }
+    else
+    {
+      *ransac_fail = 0;
+      *liczba_inlierow = inliers_count;
+    }
+  }
+}
