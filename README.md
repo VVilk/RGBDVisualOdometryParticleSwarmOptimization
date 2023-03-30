@@ -1,12 +1,12 @@
 # RGBDVisualOdometryParticleSwarmOptimization
 PSO
-This project is new open-sourced at github and may contain messy-code parts
+This project is newly open-sourced at github and may contain messy-code parts
 
 AKAZE detector/descriptor comes from Pablo Alcantarilla
 https://github.com/pablofdezalc/akaze
 
 Camera calibration parameters are coded in odometria/cala_petla.cpp and the changes requires recompilation
-ATE version requires ate.py from TUM in home directory
+ATE version requires ate.py from TUM to be in home directory
 
 To start program:
 ~/program_location  /dataset_location /result_folder
